@@ -1,0 +1,287 @@
+/* Auto-generated ProgramImpl Code */
+
+import java.util.*;              /* java Predefined*/
+import javax.baja.nre.util.*;    /* nre Predefined*/
+import javax.baja.sys.*;         /* baja Predefined*/
+import javax.baja.status.*;      /* baja Predefined*/
+import javax.baja.util.*;        /* baja Predefined*/
+import com.tridium.program.*;    /* program-rt Predefined*/
+import javax.baja.naming.*;      /* baja User Defined*/
+import javax.baja.file.*;        /* baja User Defined*/
+import javax.baja.nav.*;         /* baja User Defined*/
+import javax.baja.history.*;     /* history-rt User Defined*/
+import javax.baja.history.db.*;  /* history-rt User Defined*/
+import java.io.*;                /* java User Defined*/
+import java.util.zip.ZipEntry.*; /* java User Defined*/
+import java.util.zip.ZipOutputStream.*; /* java User Defined*/
+import java.io.File.*;           /* java User Defined*/
+import java.io.FileInputStream.*; /* java User Defined*/
+import java.io.FileOutputStream.*; /* java User Defined*/
+import java.io.IOException.*;    /* java User Defined*/
+
+public class ProgramImpl
+  extends com.tridium.program.ProgramBase
+{
+
+////////////////////////////////////////////////////////////////
+// Getters
+////////////////////////////////////////////////////////////////
+
+  public String getStatus() { return getString("status"); }
+  public BOrdList getHistoriesToExclude() { return (BOrdList)get("HistoriesToExclude"); }
+
+////////////////////////////////////////////////////////////////
+// Setters
+////////////////////////////////////////////////////////////////
+
+  public void setStatus(String v) { setString("status", v); }
+  public void setHistoriesToExclude(javax.baja.naming.BOrdList v) { set("HistoriesToExclude", v); }
+
+////////////////////////////////////////////////////////////////
+// Program Source
+////////////////////////////////////////////////////////////////
+
+   public void onStart() throws Exception
+  {
+  // start up code here
+  }
+  
+  // This example runs under N4
+  // This example demonstrates executing a program object task on a separate
+  // thread. Since actions are run on the system thread by default, any long-
+  // running task should be completed on a separate thread in order to avoid
+  // watchdog timeout problems.
+  //
+  // In this example, the execute method creates a new thread, and starts it.
+  // Since program objects implement Runnable, you can implement the run() method
+  // and allow the program object to be the target of the new thread.
+  //
+  // This technique is good when the program object will not be executed at a high
+  // rate. Since a new thread is created for each execution, it is possible this
+  // approach could consume to many system resources.
+  //
+  
+  public void onExecute()
+  throws Exception
+  {
+  if (running) return; // only allow one execution at a time
+  
+  // Create a new thread, with the starting point set as the current program
+  // object.
+  Thread thread = new Thread(this, getComponent().getName());
+  
+  
+  // Start the thread
+  thread.start();
+  }
+  
+  public void onCancel()
+  throws Exception
+  {
+  running = false;
+  }
+  
+  public void run()
+  {
+  // This task will take a long time
+  try
+  {
+  BComponent base = getComponent();
+  running = true;
+  BOrdList exclude = getHistoriesToExclude();
+  progress("Started exporting history records");
+  BHistoryService service = (BHistoryService)Sys.getService(BHistoryService.TYPE);
+  BHistoryDatabase db = service.getDatabase();
+  
+  if (db == null)
+  {
+  progress("Failed - Could not find history database");
+  return;
+  }
+  
+  int count = 0;
+  
+  BHistoryDevice[] devices = db.listDevices();
+  for (int i = 0; i < devices.length; i++)
+  {
+  if (!running)
+  { // Check if canceled
+  progress("Operation canceled.");
+  return;
+  }
+  
+  if (contains(devices[i], exclude)) continue; // skip if in excluded list
+  
+  BIHistory[] histories = db.listHistories(devices[i]);
+  
+  //add a sub folder for storing the histories if necessary
+  File basePath = Sys.getStationHome();
+  File ePath = null;
+  File stationFolder = null;
+  
+  if(new File(basePath, "historyExports").exists() != true)
+  {
+  ePath = new File(basePath,"historyExports");
+  ePath.mkdir();
+  }
+  else
+  {
+  ePath = new File(basePath,"historyExports");
+  }
+  
+  String stationName = "";
+  String historyName = "";
+  
+  for (int j = 0; j < histories.length; j++)
+  {
+  if (!running)
+  { // Check if canceled
+  progress("Operation canceled.");
+  return;
+  }
+  
+  if (contains(histories[j], exclude)) continue; // skip if in excluded list
+  
+  progress(" Exporting records for "+histories[j].getId());
+  
+  stationName = histories[j].getId().getDeviceName();
+  historyName = histories[j].getId().getHistoryName();
+  
+  if(new File(ePath,stationName).exists() != true)
+  {
+  //need to make the folder
+  stationFolder = new File(ePath,stationName);
+  stationFolder.mkdir();
+  }
+  else
+  {
+  stationFolder = new File(ePath,stationName);
+  }
+  
+  
+  //PrintStream out = new PrintStream(new FileOutputStream(baseEPath + stationName + "" + historyName + ".csv", true));
+  PrintStream out = new PrintStream(new FileOutputStream(new File(stationFolder,historyName + ".csv"), true));
+  //Changed below to only output the timestamp and value.
+  OrdTarget table = BOrd.make("history:" + histories[j].getId().toString() + "|bql:select timestamp, value").resolve(base);
+  out.println(exportToCsv(table));
+  out.close();
+  count++;
+  }
+  }
+  
+  progress("Completed exporting "+count+" histories ");
+  }
+  catch(Exception e)
+  {
+  progress("Error during export of histories " + e);
+  }
+  finally
+  {
+  running = false;
+  String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
+  try {
+      File zipFile = new File(Sys.getStationHome(), "historyExports.zip");
+      File folderToZip = new File(Sys.getStationHome(), "historyExports");
+      if (folderToZip.exists()) {
+          zipFolder(folderToZip, zipFile);
+          //progress("Completed exporting "+count+" histories ,Ready to Download");
+          progress("Completed,Ready to Download "+timestamp);
+      } else {
+          progress("No folder found to zip.");
+      }
+  } catch (IOException e) {
+      progress("Error while zipping: " + e.getMessage());
+  }
+  
+  }
+  }
+  
+  /**
+  * Run the CSV exporter against the specified table to build an
+  * in memory representation of the table as a CSV file.
+  */
+  private String exportToCsv(OrdTarget table)
+  throws Exception
+  {
+  // create instance of ITableToCsv exporter
+  BExporter exporter = (BExporter)Sys.getType("file:ITableToCsv").getInstance();
+  
+  // run the CSV exporter to export to memory based byte array
+  ByteArrayOutputStream out = new ByteArrayOutputStream();
+  ExportOp op = ExportOp.make(table, out);
+  exporter.export(op);
+  
+  // return as string (this works because we String will use the default
+  // encoding, which should match encoding ITableToCsv exporter used to
+  // create a PrintWriter from a raw OutputStream)
+  return new String(out.toByteArray());
+  }
+  
+  
+  
+  public static boolean contains(BINavNode obj, BOrdList list)
+  {
+  BOrd navOrd = obj.getNavOrd().relativizeToSession();
+  for (int i = 0; i < list.size(); i++)
+  {
+  if (navOrd.equals(list.get(i).relativizeToSession())) return true;
+  }
+  
+  return false;
+  }
+  
+  public void progress(String progress)
+  {
+  System.out.println(progress);
+  setStatus(progress);
+  }
+  
+  public static boolean running = false;
+  //String basePath = "d:\\niagara\\Niagara-3.5.25\\stations" + (Sys.getStation().getStationName().toString()) + "";
+  //String baseEPath = "d:\\niagara\\Niagara-3.5.25\\stations" + (Sys.getStation().getStationName().toString()) + "\\historyExport";
+  //Upadted by Ramki,to generate zip file. 26/04/2025////////////////////////////////////////////////////////////////////////////
+  private void zipFolder(File sourceFolder, File zipFile) throws IOException {
+      try (
+          FileOutputStream fos = new FileOutputStream(zipFile);
+          java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(fos);
+          //ZipOutputStream zos = new ZipOutputStream(fos)
+      ) {
+          zipFileRecursive(sourceFolder, sourceFolder, zos);
+      }
+  }
+  private void zipFileRecursive(File rootFolder, File sourceFile, java.util.zip.ZipOutputStream zos) throws IOException {
+  //private void zipFileRecursive(File rootFolder, File sourceFile, ZipOutputStream zos) throws IOException {
+      if (sourceFile.isDirectory()) {
+          File[] files = sourceFile.listFiles();
+          if (files != null) {
+              for (File file : files) {
+                  zipFileRecursive(rootFolder, file, zos);
+              }
+          }
+      } else {
+          String zipEntryName = rootFolder.toURI().relativize(sourceFile.toURI()).getPath();
+          try (
+              FileInputStream fis = new FileInputStream(sourceFile)
+          ) {
+              java.util.zip.ZipEntry zipEntry = new java.util.zip.ZipEntry(zipEntryName);
+              //ZipEntry zipEntry = new ZipEntry(zipEntryName);
+              zos.putNextEntry(zipEntry);
+  
+              byte[] buffer = new byte[1024];
+              int len;
+              while ((len = fis.read(buffer)) > 0) {
+                  zos.write(buffer, 0, len);
+              }
+  
+              zos.closeEntry();
+          }
+      }
+   
+  }
+  
+  
+  public void onStop() throws Exception
+  {
+  // shutdown code here
+  }
+}
